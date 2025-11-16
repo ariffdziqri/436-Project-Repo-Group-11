@@ -25,19 +25,19 @@ title_borough = function(x) dplyr::recode(
 
 crashes_all = raw %>%
   transmute(
-    crash_date = as.Date(`CRASH DATE`, format = "%m/%d/%Y"),
+    crash_date = as.Date(`CRASH.DATE`, format = "%m/%d/%Y"),
     year = lubridate::year(crash_date),
     month = lubridate::month(crash_date),
-    crash_time = trimws(`CRASH TIME`),
+    crash_time = trimws(`CRASH.TIME`),
     hour= suppressWarnings(as.integer(sub(":.*", "", crash_time))),
     borough_tc = title_borough(`BOROUGH`),
     latitude = suppressWarnings(as.numeric(`LATITUDE`)),
     longitude = suppressWarnings(as.numeric(`LONGITUDE`)),
-    factor1 = trimws(`CONTRIBUTING FACTOR VEHICLE 1`),
-    factor2 = trimws(`CONTRIBUTING FACTOR VEHICLE 2`),
-    factor3 = trimws(`CONTRIBUTING FACTOR VEHICLE 3`),
-    factor4 = trimws(`CONTRIBUTING FACTOR VEHICLE 4`),
-    factor5 = trimws(`CONTRIBUTING FACTOR VEHICLE 5`)
+    factor1 = trimws(`CONTRIBUTING.FACTOR.VEHICLE.1`),
+    factor2 = trimws(`CONTRIBUTING.FACTOR.VEHICLE.2`),
+    factor3 = trimws(`CONTRIBUTING.FACTOR.VEHICLE.3`),
+    factor4 = trimws(`CONTRIBUTING.FACTOR.VEHICLE.4`),
+    factor5 = trimws(`CONTRIBUTING.FACTOR.VEHICLE.5`)
   ) %>%
   filter(!is.na(crash_date),
          !is.na(latitude), !is.na(longitude),
@@ -45,7 +45,7 @@ crashes_all = raw %>%
          !is.na(hour), hour >= 0, hour <= 23)
 
 # Borough boundaries from  local CSV 
-borough_boundaries = read_csv("borough_boundaries.csv", show_col_types = FALSE)
+borough_boundaries = read_csv("../Datasets/borough_boundaries.csv", show_col_types = FALSE)
 boroughs_sf = borough_boundaries %>%
   mutate(geometry = sf::st_as_sfc(the_geom, crs = 4326)) %>%
   sf::st_as_sf(sf_column_name = "geometry") %>%
