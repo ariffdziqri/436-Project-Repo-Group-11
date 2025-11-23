@@ -49,7 +49,7 @@ crashes_all = raw %>%
          !is.na(hour), hour >= 0, hour <= 23)
 
 # Borough boundaries from  local CSV 
-borough_boundaries = read_csv("../Datasets/borough_boundaries.csv", show_col_types = FALSE)
+borough_boundaries = read_csv(paste0(fp, "/Datasets/borough_boundaries.csv"), show_col_types = FALSE)
 boroughs_sf = borough_boundaries %>%
   mutate(geometry = sf::st_as_sfc(the_geom, crs = 4326)) %>%
   sf::st_as_sf(sf_column_name = "geometry") %>%

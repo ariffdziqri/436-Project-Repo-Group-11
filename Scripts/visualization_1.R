@@ -3,6 +3,7 @@
 require(shiny)
 require(dplyr)
 require(ggplot2)
+require(tidyverse)
 
 ## Read in data
 
