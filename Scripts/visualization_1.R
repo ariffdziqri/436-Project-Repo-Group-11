@@ -37,7 +37,7 @@ my_line_graph_function <- function(dat){
   
   dat |> 
     ggplot(aes(x = hour,
-               y = n_accidents,
+               y = density,
                group = BOROUGH,
                col = BOROUGH)) +
     geom_point() +
@@ -85,7 +85,9 @@ server <- function(input, output) {
       )) |> 
       filter(selected == 1) |> 
       group_by(BOROUGH, hour) |> 
-      summarize(n_accidents = n())
+      summarize(n_accidents = n()) |> 
+      ungroup() |> 
+      mutate(density = n_accidents/sum(n_accidents))
   })
   
   output$line <- renderPlot(my_line_graph_function(shiny_df_subset()))
