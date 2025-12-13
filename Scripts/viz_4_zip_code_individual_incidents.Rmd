@@ -1,0 +1,249 @@
+---
+title: "combined zip code visualization with proportions"
+output: html_document
+date: "2025-12-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(shiny)
+library(tidyverse)
+library(tmap)
+library(sf)
+```
+
+
+```{r}
+zip_geojson_name <- "Modified_Zip_Code_Tabulation_Areas_(MODZCTA)_20251115.geojson"
+
+if (file.exists(zip_geojson_name)) {
+  zip_path <- zip_geojson_name
+} else if (file.exists(file.path("../Datasets", zip_geojson_name))) {
+  zip_path <- file.path("../Datasets", zip_geojson_name)
+} else {
+  stop("Boundary file not found. Please ensure the GeoJSON file is in your folder.")
+}
+
+nyc_zip_sf <- st_read(zip_path, quiet = TRUE) %>%
+  st_transform(crs = 4326)
+
+
+csv_name <- "Motor_Vehicle_Collisions_-_Crashes_20251017.csv"
+zip_name <- "Motor_Vehicle_Collisions_-_Crashes_20251017.csv.zip"
+
+find_and_prep_csv <- function() {
+  if (file.exists(csv_name)) return(csv_name)
+  if (file.exists(file.path("../Datasets", csv_name))) return(file.path("../Datasets", csv_name))
+   
+  target_zip <- NULL
+  if (file.exists(zip_name)) target_zip <- zip_name
+  else if (file.exists(file.path("../Datasets", zip_name))) target_zip <- file.path("../Datasets", zip_name)
+   
+  if (!is.null(target_zip)) {
+    message("Unzipping crash data...")
+    unzip(target_zip, exdir = dirname(target_zip))
+    if(file.exists(csv_name)) return(csv_name)
+    if(file.exists(file.path("../Datasets", csv_name))) return(file.path("../Datasets", csv_name))
+  }
+  return(NULL)
+}
+
+csv_path <- find_and_prep_csv()
+if (is.null(csv_path)) stop("Crash Data CSV/ZIP not found.")
+
+collisions_raw <- read_csv(csv_path, show_col_types = FALSE)
+
+
+collisions_stats <- collisions_raw %>%
+  rename(zip_code = `ZIP CODE`) %>%
+  filter(!is.na(zip_code)) %>%
+  mutate(
+    zip_code = as.character(zip_code),
+    pedestrian_casualties = `NUMBER OF PEDESTRIANS INJURED` + `NUMBER OF PEDESTRIANS KILLED`,
+    cyclist_casualties = `NUMBER OF CYCLIST INJURED` + `NUMBER OF CYCLIST KILLED`,
+    motorist_casualties = `NUMBER OF MOTORIST INJURED` + `NUMBER OF MOTORIST KILLED`
+  ) %>%
+  group_by(zip_code) %>%
+  summarise(
+    total_motorist = sum(motorist_casualties, na.rm = TRUE),
+    total_cyclist = sum(cyclist_casualties, na.rm = TRUE),
+    total_pedestrian = sum(pedestrian_casualties, na.rm = TRUE)
+  ) %>%
+  mutate(
+    total_all = total_motorist + total_cyclist + total_pedestrian,
+    prop_motorist = ifelse(total_all > 0, paste0("🔴 ", round(100 * total_motorist / total_all, 1), "%"), "🔴 0%"),
+    prop_cyclist = ifelse(total_all > 0, paste0("🔵 ", round(100 * total_cyclist / total_all, 1), "%"), "🔵 0%"),
+    prop_pedestrian = ifelse(total_all > 0, paste0("🟢 ", round(100 * total_pedestrian / total_all, 1), "%"), "🟢 0%"),
+    majority_casualty = case_when(
+      total_motorist >= total_cyclist & total_motorist >= total_pedestrian ~ "Motorist",
+      total_cyclist > total_motorist & total_cyclist >= total_pedestrian ~ "Cyclist",
+      total_pedestrian > total_motorist & total_pedestrian > total_cyclist ~ "Pedestrian",
+      TRUE ~ "Other"
+    )
+  )
+
+nyc_zip_stats_sf <- nyc_zip_sf %>%
+  mutate(modzcta = as.character(modzcta)) %>%
+  left_join(collisions_stats, by = c("modzcta" = "zip_code")) %>%
+  mutate(majority_casualty = replace_na(majority_casualty, "Other")) %>% 
+  mutate(
+    hover_text = paste0(
+      "<b>Zip Code: ", modzcta, "</b><br>",
+      "Motorist: ", prop_motorist, "<br>",
+      "Cyclist: ", prop_cyclist, "<br>",
+      "Pedestrian: ", prop_pedestrian)
+  )
+
+
+collisions_clean <- collisions_raw %>%
+  rename(
+    zip_code = `ZIP CODE`,
+    latitude = LATITUDE,
+    longitude = LONGITUDE,
+    crash_date = `CRASH DATE`,
+    factor = `CONTRIBUTING FACTOR VEHICLE 1`
+  ) %>%
+  filter(!is.na(latitude), !is.na(longitude), !is.na(zip_code)) %>%
+  mutate(
+    zip_code = as.character(zip_code),
+    casualty_type = case_when(
+      (`NUMBER OF PEDESTRIANS INJURED` + `NUMBER OF PEDESTRIANS KILLED`) > 0 ~ "Pedestrian",
+      (`NUMBER OF CYCLIST INJURED` + `NUMBER OF CYCLIST KILLED`) > 0 ~ "Cyclist",
+      (`NUMBER OF MOTORIST INJURED` + `NUMBER OF MOTORIST KILLED`) > 0 ~ "Motorist",
+      TRUE ~ "Other"
+    )
+  )
+
+collisions_sf <- st_as_sf(
+  collisions_clean,
+  coords = c("longitude", "latitude"),
+  crs = 4326
+)
+
+
+valid_zips <- sort(unique(nyc_zip_stats_sf$modzcta))
+dropdown_choices <- c("Overview (All Zips)" = "overview", valid_zips)
+
+
+
+
+ui <- fluidPage(
+  titlePanel("NYC Crash Visualizer"),
+   
+  sidebarLayout(
+    sidebarPanel(
+      width = 3,
+      h4("Controls"),
+      hr(),
+      uiOutput("sidebar_info"),
+      actionButton("reset_view", "Back to Overview")
+    ),
+     
+    mainPanel(
+      width = 9,
+      tmapOutput("map_output", height = "85vh")
+    )
+  )
+)
+
+tmap_mode("view")
+
+server <- function(input, output, session) {
+   
+  casualty_colors <- c(
+    "Motorist" = "#E41A1C",    
+    "Cyclist" = "#377EB8",     
+    "Pedestrian" = "#4DAF4A",  
+    "Other" = "gray"
+  )
+  
+  selected_zip = reactiveVal(NULL)
+  
+  observeEvent(input$map_output_shape_click, {
+    click <- input$map_output_shape_click
+    
+    cat("CLICK EVENT:\n")
+    print(click)
+    cat("click$id =", click$id, "\n\n")
+    
+    if (!is.null(click$id)) {
+      zip <- str_extract(click$id, "(?<=Zip_Code__)\\d+")
+      selected_zip(zip)
+    }
+  })
+  
+  observeEvent(input$reset_view, {
+    selected_zip(NULL)
+  })
+   
+  output$map_output <- renderTmap({
+    selection = selected_zip()
+     
+    if (is.null(selection)) {
+      tm_shape(nyc_zip_stats_sf) +
+        tm_polygons(
+          col = "majority_casualty",
+          title = "Majority Casualty Type",
+          palette = casualty_colors,
+          id = "hover_text",
+          popup.vars = FALSE,
+          alpha = 0.7,
+          border.col = "white",
+          border.alpha = 0.5
+        ) +
+        tm_basemap("CartoDB.Positron")
+       
+    } else {
+      selected_boundary <- nyc_zip_sf %>% filter(modzcta == selection)
+      selected_crashes <- collisions_sf %>% filter(zip_code == selection)
+       
+      tm_shape(selected_boundary) +
+        tm_borders(col = "black", lwd = 3) + 
+         
+      tm_shape(selected_crashes) +
+        tm_dots(
+          col = "casualty_type",
+          title = "Casualty Type",
+          palette = casualty_colors,
+          size = 0.3,
+          scale = 2.5,  
+          alpha = 0.8,
+          id = "crash_date",
+          popup.vars = c("Type"="casualty_type", "Date"="crash_date", "Factor"="factor")
+        ) +
+        tm_basemap("CartoDB.Positron")
+    }
+  })
+   
+  output$sidebar_info <- renderUI({
+    selected = selected_zip()
+    
+    if (is.null(selected)) {
+      tagList(
+        h5("Overview Mode"),
+        p("Shows majority casualty type per Zip Code."),
+        tags$ul(
+          tags$li(style="color:#E41A1C", "Red: Motorist"),
+          tags$li(style="color:#377EB8", "Blue: Cyclist"),
+          tags$li(style="color:#4DAF4A", "Green: Pedestrian")
+        )
+      )
+    } else {
+      n_crashes <- sum(collisions_sf$zip_code == selected, na.rm = TRUE)
+      tagList(
+        h5(paste("Zip Code:", selected)),
+        p(paste("Total Collisions:", n_crashes)),
+        p(strong("Dot Size increased for visibility.")),
+        tags$ul(
+          tags$li(style="color:#E41A1C", "Red: Motorist"),
+          tags$li(style="color:#377EB8", "Blue: Cyclist"),
+          tags$li(style="color:#4DAF4A", "Green: Pedestrian")
+        )
+      )
+    }
+  })
+}
+
+shinyApp(ui, server)
+```
+

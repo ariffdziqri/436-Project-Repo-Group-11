@@ -74,13 +74,13 @@ my_bar_graph_function <- function(dat) {
   dat |> 
     ggplot(aes(x = cfactor,
                y = density)) +
-    geom_col(aes(fill = cfactor)) +
+    geom_col(aes(fill = "deepskyblue3")) +
     xlab("Contributing Factor") +
-    ylab("Count") +
+    ylab("Density") +
     labs(title = "Counts of Different Contributing Factors",
          subtitle = "Motor Vehicle Incidents in NYC") +
-    theme(axis.text.x = element_text(size = 6, angle = 90, hjust = 1, vjust = 0.5),
-          legend.position = "none")
+    theme(legend.position = "none") +
+    coord_flip()
 }
 
 # ui ----------------------------------------------------------------------
@@ -108,9 +108,11 @@ server <- function(input, output) {
       )) |> 
       filter(selected == 1) |> 
       group_by(cfactor) |> 
-      summarise(count = sum(n)) |> 
+      summarise(count = sum(n)) |>
+      slice_max(n = 10, order_by = count, with_ties = TRUE) |> ## only retain top 10 contributing factors
       ungroup() |> 
-      mutate(density = count/sum(count))
+      mutate(density = count/sum(count),
+             cfactor = fct_reorder(cfactor, density))
   })
   
   output$bar <- renderPlot(my_bar_graph_function(shiny_df_subset()))
@@ -118,19 +120,3 @@ server <- function(input, output) {
 }
 
 shinyApp(ui, server)
-
-# Another thing is that there are many visualizations answering the 
-# “where the accidents are” aspect of your main question, but there is 
-# not much of the “why the accidents actually occur”. Perhaps you could add 
-# another visualization that expands more on the “why” or replace one of the 
-# visualizations that focuses on the “where”. One suggestion for such a visualization, 
-# given your data, is taking the "contributing factor *” variable values, then deriving 
-# counts for the number of collisions that occur because of each variable each year. 
-# Essentially, you could derive a new small dataframe where you have a year date column 
-# and contributing factor count columns, where each row has the year and the counts of 
-# how many accidents are due to each contributing factor. Then you could take that data 
-# frame and make a bar plot where the x axis is the contributing factor variable and the 
-# y axis is the number of accidents. Then you could make it interactive by letting the 
-# user filter the year for the bar plot with a year drop-down or slider. Or you could
-# create faceted bar plots by year. This would answer the “why” question of analyzing 
-# which contributing factors cause how many or the most/least accidents every year.
